@@ -76,15 +76,33 @@ emit() {
       # is the task using a workspace(s) to share files?
       [[ "$disallowed_workspaces" == '[]' ]] && continue
 
-      # is there a newer version of the task
-      base_task_path=("${paths[@]}")
-      unset 'base_task_path[-1]'
-      version="${base_task_path[-1]/\/}"
-      unset 'base_task_path[-1]'
-      for dir in $(IFS=''; echo "${base_task_path[*]}*"); do
-          [[ ! -d "${dir}" ]] && continue
-          [[ "${version}" < "${dir/*\/}" ]] && continue 2
-      done
+      # get task name and version from metadata
+      task_name="$(yq -r '.metadata.name' "${task_file}")"
+      current_version="$(yq -r '.metadata.labels."app.kubernetes.io/version"' "${task_file}" 2>/dev/null || echo "")"
+
+      # skip if we can't get version information
+      [[ -z "$current_version" || "$current_version" == "null" ]] && continue
+
+      # check if there's a newer version of this task by looking at all tasks with same name
+      is_latest_version=true
+      while IFS= read -r other_task; do
+          [[ "$other_task" == "$task_file" ]] && continue
+          other_task_name="$(yq -r '.metadata.name' "$other_task" 2>/dev/null || echo "")"
+          [[ "$other_task_name" != "$task_name" ]] && continue
+
+          other_version="$(yq -r '.metadata.labels."app.kubernetes.io/version"' "$other_task" 2>/dev/null || echo "")"
+          [[ -z "$other_version" || "$other_version" == "null" ]] && continue
+
+          # simple version comparison (assumes semantic versioning)
+          if printf '%s\n%s\n' "$current_version" "$other_version" | sort -V -C 2>/dev/null; then
+              # current_version <= other_version, so this is not the latest
+              is_latest_version=false
+              break
+          fi
+      done < <(find task -name "*.yaml" -type f ! -name "kustomization.yaml" ! -name "recipe.yaml" ! -name "patch.yaml")
+
+      # skip TA check if this is not the latest version
+      [[ "$is_latest_version" == "false" ]] && continue
 
       # there is no Trusted Artifacts variant of the task
       unset 'paths[-1]'

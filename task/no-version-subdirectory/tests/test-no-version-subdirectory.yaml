@@ -1,0 +1,55 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: test-no-version-subdirectory
+spec:
+  workspaces:
+    - name: tests-workspace
+      description: The workspace provided by the test runner script.
+  tasks:
+    - name: prepare-workspace
+      taskSpec:
+        workspaces:
+          - name: source
+        steps:
+          - name: create-source-dir
+            image: registry.access.redhat.com/ubi9/ubi-minimal:9.6
+            script: |
+              #!/bin/bash
+              set -e
+              mkdir -p $(workspaces.source.path)/source
+              echo "Created source subdirectory."
+      workspaces:
+        - name: source
+          workspace: tests-workspace
+
+    - name: run-no-version-subdirectory-task
+      runAfter:
+        - prepare-workspace
+      taskRef:
+        name: no-version-subdirectory
+      workspaces:
+        - name: source
+          workspace: tests-workspace
+
+    - name: verify-output
+      runAfter:
+        - run-no-version-subdirectory-task
+      taskSpec:
+        workspaces:
+          - name: source
+        steps:
+          - name: check-output
+            image: registry.access.redhat.com/ubi9/ubi-minimal:9.6
+            script: |
+              #!/bin/bash
+              set -ex
+
+              FILE_PATH="$(workspaces.source.path)/source/demo.txt"
+              echo "Verifying content of ${FILE_PATH}..."
+
+              grep -q "Task running from flexible structure!" "${FILE_PATH}"
+
+      workspaces:
+        - name: source
+          workspace: tests-workspace

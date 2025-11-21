@@ -1,0 +1,29 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: nested-example
+  annotations:
+    tekton.dev/tags: "konflux"
+  labels:
+    app.kubernetes.io/version: "2.0"
+spec:
+  description: |-
+    Example task stored in deeply nested directory structure.
+
+  steps:
+    - name: demo
+      image: registry.access.redhat.com/ubi9/ubi-micro:9.6@sha256:f5c5213d2969b7b11a6666fc4b849d56b48d9d7979b60a37bb853dff0255c14b
+      computeResources:
+        requests:
+          memory: 256Mi
+          cpu: 100m
+        limits:
+          memory: 256Mi
+      script: |
+        #!/bin/bash
+
+        echo "Task running from deeply nested structure!" >> "$(workspaces.source.path)/source/nested.txt"
+
+  workspaces:
+    - name: source
+      description: Workspace with the source code

@@ -121,32 +121,61 @@ create_migration() {
         cd "$work_dir" || exit 1
     fi
 
-    local task_dir="task/${task_name}"
+find_task_yaml_file() {
+    local base_task_dir="$1"
 
-    if [[ ! -e "$task_dir" ]]; then
-        error "task $task_dir does not exist."
+    # Find the task YAML file where filename matches a parent directory name
+    local task_yaml_file=""
+    while IFS= read -r -d '' yaml_file; do
+        local dir_name="$(basename "$(dirname "$yaml_file")")"
+        local file_name="$(basename "$yaml_file" .yaml)"
+        if [[ "$dir_name" == "$file_name" ]]; then
+            task_yaml_file="$yaml_file"
+            break
+        fi
+    done < <(find "$base_task_dir" -name "*.yaml" -type f -print0)
+
+    if [[ -n "$task_yaml_file" ]]; then
+        echo "$task_yaml_file"
+        return 0
+    fi
+    return 1
+}
+
+    local base_task_dir="task/${task_name}"
+
+    if [[ ! -e "$base_task_dir" ]]; then
+        error "task $base_task_dir does not exist."
     fi
 
-    local detected_version=
+    # Find the task YAML file using flexible search
+    local task_yaml_file
+    task_yaml_file="$(find_task_yaml_file "$base_task_dir")"
+    if [[ $? -ne 0 ]]; then
+        error "could not find task YAML file for task $task_name under $base_task_dir"
+    fi
 
-    if [[ -z "$use_new_layout" ]]; then
-        if [[ -z "$task_version" ]]; then
-            detected_version=$(
-                find "$task_dir" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | \
-                    sort -t. -k 1,1n -k 2,2n | \
-                    tail -n1
-            )
-            if [[ -z "$detected_version" ]]; then
-                error "there is no version directory under $task_dir"
-            fi
-            task_version="$detected_version"
+    # Set task_dir to the directory containing the task YAML
+    local task_dir
+    task_dir="$(dirname "$task_yaml_file")"
+
+    # Extract current version from task metadata
+    local current_version
+    current_version="$(yq -r '.metadata.labels."app.kubernetes.io/version"' "$task_yaml_file" 2>/dev/null || echo "")"
+    if [[ -z "$current_version" || "$current_version" == "null" ]]; then
+        error "could not extract version from task metadata in $task_yaml_file"
+    fi
+
+    # For backward compatibility with version-specific structure
+    if [[ -z "$use_new_layout" ]] && [[ -n "$task_version" ]]; then
+        # Validate that the specified version matches the metadata version (major.minor)
+        IFS=. read -r meta_major meta_minor meta_patch <<< "$current_version"
+        if [[ "${meta_major}.${meta_minor}" != "$task_version" ]]; then
+            error "specified version $task_version does not match task metadata version ${meta_major}.${meta_minor} in $task_yaml_file"
         fi
-
-        task_dir="${task_dir}/${task_version}"
-
-        if [[ ! -e "$task_dir" ]]; then
-            error "task directory does not exist: ${task_dir}"
-        fi
+    else
+        # Use the version from metadata
+        task_version="$current_version"
     fi
 
     local -r migration_dir="${task_dir}/migrations"
@@ -162,14 +191,10 @@ create_migration() {
         return 0
     fi
 
-    declare -r task_file="${task_dir}/${task_name}.yaml"
-    if [[ ! -e "$task_file" ]]; then
-        error "task file $task_file does not exist."
-    fi
+    # Use the task file we already found
+    declare -r task_file="$task_yaml_file"
 
-    IFS=. read -r major minor patch < <(
-        yq '.metadata.labels."app.kubernetes.io/version"' "$task_file"
-    )
+    IFS=. read -r major minor patch <<< "$current_version"
 
     if [[ -z "$use_new_layout" ]]; then
         if [[ "${major}.${minor}" != "$task_version" ]]; then

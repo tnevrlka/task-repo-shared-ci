@@ -165,11 +165,38 @@ check_pass_shellcheck() {
     return 1
 }
 
+# Find task YAML file using flexible path detection
+find_task_yaml_in_dir() {
+    local base_dir="$1"
+    local task_name="$2"
+
+    # Look for task YAML file where filename matches a directory name in the path
+    while IFS= read -r -d '' yaml_file; do
+        local dir_path="$(dirname "$yaml_file")"
+        local file_name="$(basename "$yaml_file" .yaml)"
+
+        # Check if any parent directory name matches the file name
+        local search_dir="$dir_path"
+        while [[ "$search_dir" != "$base_dir" && "$search_dir" != "." && "$search_dir" != "/" ]]; do
+            local dir_name="$(basename "$search_dir")"
+            if [[ "$dir_name" == "$file_name" && "$dir_name" == "$task_name" ]]; then
+                echo "$yaml_file"
+                return 0
+            fi
+            search_dir="$(dirname "$search_dir")"
+        done
+    done < <(find "$base_dir" -name "*.yaml" -type f -print0)
+
+    return 1
+}
+
 # Determine if a task is a normal task. 0 returns if it is, otherwise 1 is returned.
 is_normal_task() {
-    local -r task_dir=$1
-    local -r task_name=$2
-    if [ -f "${task_dir}/${task_name}.yaml" ]; then
+    local -r task_dir="$1"
+    local -r task_name="$2"
+    local task_yaml
+    task_yaml="$(find_task_yaml_in_dir "$task_dir" "$task_name")"
+    if [[ $? -eq 0 && -f "$task_yaml" ]]; then
         return 0
     fi
     return 1
@@ -177,11 +204,12 @@ is_normal_task() {
 
 # Determine if a task is a kustomized task. 0 returns if it is, otherwise 1 is returned.
 is_kustomized_task() {
-    local -r task_dir=$1
-    local -r task_name=$2
+    local -r task_dir="$1"
+    local -r task_name="$2"
     local -r kt_config_file="$task_dir/kustomization.yaml"
-    local -r task_file="${task_dir}/${task_name}.yaml"
-    if [ -f "$kt_config_file" ] && [ ! -e "$task_file" ]; then
+    local task_yaml
+    task_yaml="$(find_task_yaml_in_dir "$task_dir" "$task_name")"
+    if [[ -f "$kt_config_file" && $? -ne 0 ]]; then
         return 0
     fi
     return 1
@@ -200,15 +228,26 @@ resolve_migrations_parent_dir() {
 # Construct expected task file path according to given migration file.
 # Arguments: a migration file path, e.g. task/foo/migrations/0.3.sh
 construct_task_file_path() {
-    local -r migration_file=$1
+    local -r migration_file="$1"
     local task_dir
-    local task_file
     local task_name
 
-    task_name=${migration_file#task/}
-    task_name=${task_name%%/*}
-    task_dir=${migration_file%/migrations/*}
-    printf "%s" "${task_dir}/${task_name}.yaml"
+    # Extract task name from migration file path
+    task_name="${migration_file#task/}"
+    task_name="${task_name%%/*}"
+
+    # The task directory is the parent of the migrations directory
+    task_dir="${migration_file%/migrations/*}"
+
+    # Use flexible search to find the actual task YAML file
+    local task_yaml
+    task_yaml="$(find_task_yaml_in_dir "$task_dir" "$task_name")"
+    if [[ $? -eq 0 ]]; then
+        printf "%s" "$task_yaml"
+    else
+        # Fallback to the old pattern if not found via flexible search
+        printf "%s" "${task_dir}/${task_name}.yaml"
+    fi
 }
 
 # Directory migrations/ must be present alongside task file.

@@ -32,14 +32,33 @@ warning_message="# WARNING: This is an auto generated file, do not modify this f
 main() {
     cd "$SCRIPT_DIR/.."
     local ret=0
-    find task -maxdepth 3 -mindepth 3 -type f -name "*.yaml" | awk -F '/' '{ print $0, $2, $3, $4 }' | \
-    while read -r task_path task_name task_version file_name
+    find task -name "kustomization.yaml" -type f | \
+    while read -r kustomization_path
     do
-        if [[ "$file_name" == "kustomization.yaml" ]]; then
-          echo "Building task manifest for: $task_name/$task_version"
-        else
-          continue
+        task_dir=$(dirname "$kustomization_path")
+
+        echo "Building task manifest for: $task_dir"
+
+        # Get the task YAML file from the kustomization resources
+        task_yaml_resource=$(yq -r '.resources[]' "$kustomization_path" | grep '\.yaml$' | head -1)
+
+        if [[ -z "$task_yaml_resource" ]]; then
+            echo "No YAML resource found in $kustomization_path" >&2
+            continue
         fi
+
+        task_yaml_path="$task_dir/$task_yaml_resource"
+        task_name=$(basename "$task_yaml_resource" .yaml)
+
+        # Extract version from task YAML metadata
+        if [[ -f "$task_yaml_path" ]]; then
+            task_version=$(yq -r '.metadata.labels."app.kubernetes.io/version"' "$task_yaml_path" 2>/dev/null || echo "unknown")
+        else
+            echo "Warning: Task YAML not found at $task_yaml_path" >&2
+            continue
+        fi
+
+        echo "Task: $task_name (version $task_version)"
 
         # Skip the tasks mentioned in SKIP_TASKS
         skipit=
@@ -49,18 +68,21 @@ main() {
         [[ -n ${skipit} ]] && continue
 
         # Check if there is only one resource in the kustomization file and it is <task_name>.yaml
-        resources=$(yq -r '.resources[]' "$task_path")
+        resources=$(yq -r '.resources[]' "$kustomization_path")
         if [[ "$resources" == "$task_name.yaml" ]]; then
-          echo "Skip generating manifest for the task: $task_name/$task_version"
+          echo "Skip generating manifest for the task: $task_name (version $task_version)"
           continue
         fi
-        if ! oc kustomize -o "task/$task_name/$task_version/$task_name.yaml" "task/$task_name/$task_version/"; then
+
+        # Build the kustomized manifest
+        output_path="$task_dir/$task_name.yaml"
+        if ! oc kustomize -o "$output_path" "$task_dir/"; then
             echo "failed to build task: $task_name" >&2
             ret=1
             continue
         fi
         # Add a warning message in the generated file
-        ${SED_CMD} -i "1 i $warning_message" "task/$task_name/$task_version/$task_name.yaml"
+        ${SED_CMD} -i "1 i $warning_message" "$output_path"
     done
 
     exit "$ret"

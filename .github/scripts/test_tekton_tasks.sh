@@ -68,18 +68,81 @@ for ITEM in $TEST_ITEMS; do
   fi
 done
 
+find_task_info() {
+  local item="$1"
+  local task_dir=""
+  local task_yaml=""
+
+  if [[ "$item" == *tests/test-*.yaml ]]; then
+    # It's a test file, find the task directory by going up directories
+    task_dir="$(dirname "$(dirname "$item")")"
+  else
+    # It's a task directory
+    task_dir="$item"
+  fi
+
+  # Try to find task YAML file by searching up the directory tree
+  local search_dir="$task_dir"
+  while [[ "$search_dir" != "." && "$search_dir" != "/" && "$search_dir" != "task" ]]; do
+    # First try: look for YAML files where filename matches current directory name
+    local dir_name="$(basename "$search_dir")"
+    local candidate="$search_dir/$dir_name.yaml"
+    if [[ -f "$candidate" ]]; then
+      task_yaml="$candidate"
+      task_dir="$search_dir"
+      break
+    fi
+
+    # Second try: look for any YAML file where filename matches a parent directory name
+    while IFS= read -r -d '' yaml_file; do
+      local file_name="$(basename "$yaml_file" .yaml)"
+      local check_dir="$search_dir"
+      while [[ "$check_dir" != "task" && "$check_dir" != "." ]]; do
+        local check_name="$(basename "$check_dir")"
+        if [[ "$check_name" == "$file_name" ]]; then
+          task_yaml="$yaml_file"
+          task_dir="$(dirname "$yaml_file")"
+          break 2
+        fi
+        check_dir="$(dirname "$check_dir")"
+      done
+    done < <(find "$search_dir" -maxdepth 1 -name "*.yaml" -type f -print0)
+
+    [[ -n "$task_yaml" ]] && break
+    search_dir="$(dirname "$search_dir")"
+  done
+
+  if [[ -z "$task_yaml" ]]; then
+    echo "ERROR: Could not find task YAML file for item: $item" >&2
+    return 1
+  fi
+
+  local task_name="$(basename "$task_yaml" .yaml)"
+  local task_version="$(yq -r '.metadata.labels."app.kubernetes.io/version"' "$task_yaml" 2>/dev/null || echo "unknown")"
+
+  echo "$task_dir $task_name $task_version $task_yaml"
+}
+
 for ITEM in $TEST_ITEMS; do
   echo "Test item: $ITEM"
-  TASK_DIR=$(echo $ITEM | cut -d '/' -f -3)
-  TASK_NAME=$(echo $ITEM | cut -d '/' -f 2)
-  TASK_VERSION=$(echo $ITEM | cut -d '/' -f 3)
+
+  # Extract task information using flexible path detection
+  TASK_INFO=($(find_task_info "$ITEM"))
+  if [[ $? -ne 0 ]]; then
+    exit 1
+  fi
+
+  TASK_DIR="${TASK_INFO[0]}"
+  TASK_NAME="${TASK_INFO[1]}"
+  TASK_VERSION="${TASK_INFO[2]}"
+  TASK_PATH="${TASK_INFO[3]}"
+
   echo "DEBUG: Task name: $TASK_NAME"
   echo "DEBUG: Task version: $TASK_VERSION"
+  echo "DEBUG: Task path: $TASK_PATH"
 
   TASK_VERSION_WITH_HYPHEN="$(echo $TASK_VERSION | tr '.' '-')"
   TEST_NS="${TASK_NAME}-${TASK_VERSION_WITH_HYPHEN}"
-
-  TASK_PATH=${TASK_DIR}/${TASK_NAME}.yaml
   # check if task file exists or not
   if [ ! -f $TASK_PATH ]; then
     echo "ERROR: Task file does not exist: $TASK_PATH"

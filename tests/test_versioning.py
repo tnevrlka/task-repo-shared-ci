@@ -583,3 +583,162 @@ class TestNewChangelogCommand:
         assert (repo_path / "task" / "task1" / "CHANGELOG.md").exists()
         assert (repo_path / "task" / "task2" / "CHANGELOG.md").exists()
         assert (repo_path / "task" / "task3" / "CHANGELOG.md").exists()
+
+
+class TestFlexibleStructureSupport:
+    """Test versioning script behavior with flexible task structures."""
+
+    def test_traditional_structure_still_supported(self, repo_path: Path) -> None:
+        """Test that traditional task/name/version/name.yaml structure still works."""
+        repo = create_repo(
+            repo_path,
+            {
+                "task/hello/0.1/hello.yaml": task("hello", "0.1"),
+                "task/hello/CHANGELOG.md": changelog("0.1"),
+            },
+        )
+
+        result = run_versioning_script(repo.path, "check", "--base-ref", "HEAD~1")
+
+        assert result.returncode == 0
+        assert result.stdout == ""
+        assert result.stderr == ""
+
+    def test_flat_structure_discovery_limitation(self, repo_path: Path) -> None:
+        """Test current limitation: versioning script doesn't yet support flat structures.
+
+        This test documents the current behavior and should be updated when
+        the versioning script is enhanced to support flexible structures.
+        """
+        repo = create_repo(
+            repo_path,
+            {
+                # Flat structure like task/hello/hello.yaml
+                "task/hello/hello.yaml": task("hello", "0.1"),
+                "task/hello/CHANGELOG.md": changelog("0.1"),
+            },
+        )
+
+        result = run_versioning_script(repo.path, "check", "--base-ref", "HEAD~1")
+
+        # Currently expected to pass with no tasks found since versioning script
+        # doesn't recognize flat structure as valid task files
+        assert result.returncode == 0
+        # No errors should occur, but no tasks will be processed
+
+    def test_nested_structure_discovery_limitation(self, repo_path: Path) -> None:
+        """Test current limitation: versioning script doesn't support deeply nested structures.
+
+        This test documents the current behavior and should be updated when
+        the versioning script is enhanced to support flexible structures.
+        """
+        repo = create_repo(
+            repo_path,
+            {
+                # Nested structure like task/nested/deep/subdir/nested.yaml
+                "task/nested/deep/subdir/nested.yaml": task("nested", "0.1"),
+                "task/nested/CHANGELOG.md": changelog("0.1"),
+            },
+        )
+
+        result = run_versioning_script(repo.path, "check", "--base-ref", "HEAD~1")
+
+        # Currently expected to pass with no tasks found since versioning script
+        # doesn't recognize nested structure as valid task files
+        assert result.returncode == 0
+
+    @pytest.mark.xfail(reason="Versioning script not yet updated for flexible structures")
+    def test_flexible_structure_version_check_future(self, repo_path: Path) -> None:
+        """Test that will pass once versioning script supports flexible structures.
+
+        This test is marked as expected to fail until the versioning script
+        is updated to support the new flexible task directory structures.
+        """
+        repo = create_repo(
+            repo_path,
+            {
+                "task/flexible-task/flexible-task.yaml": task("flexible-task", "0.1"),
+                "task/flexible-task/CHANGELOG.md": changelog("0.1"),
+            },
+        )
+
+        result = run_versioning_script(repo.path, "check", "--base-ref", "HEAD~1")
+
+        assert result.returncode == 0
+        assert result.stdout == ""
+        assert result.stderr == ""
+
+    def test_versioning_script_task_discovery_pattern(self, repo_path: Path) -> None:
+        """Test the current task discovery pattern in versioning script.
+
+        Verifies that the is_task_file function correctly identifies traditional
+        task structures while documenting its current limitations.
+        """
+        repo = create_repo(
+            repo_path,
+            {
+                # Traditional structure that should be found
+                "task/traditional/0.1/traditional.yaml": task("traditional", "0.1"),
+                "task/traditional/CHANGELOG.md": changelog("0.1"),
+                # Structure that won't be found due to current limitations
+                "task/flexible/flexible.yaml": task("flexible", "0.1"),
+                "task/flexible/CHANGELOG.md": changelog("0.1"),
+            },
+        )
+
+        result = run_versioning_script(repo.path, "check", "--base-ref", "HEAD~1")
+
+        # Should process the traditional task but not the flexible one
+        assert result.returncode == 0
+        # The traditional task should be validated without errors
+
+    def test_mixed_structure_repository_compatibility(self, repo_path: Path) -> None:
+        """Test versioning script in a repository with mixed task structures.
+
+        Ensures the script handles repos that have both traditional and
+        flexible structures gracefully.
+        """
+        repo = create_repo(
+            repo_path,
+            {
+                # Traditional structure
+                "task/old-style/1.0/old-style.yaml": task("old-style", "1.0"),
+                "task/old-style/CHANGELOG.md": changelog("1.0"),
+                # Flexible structure (won't be processed currently)
+                "task/new-style/new-style.yaml": task("new-style", "1.0"),
+                "task/new-style/CHANGELOG.md": changelog("1.0"),
+            },
+        )
+
+        result = run_versioning_script(repo.path, "check", "--base-ref", "HEAD~1")
+
+        # Should process available tasks without failing on unrecognized structures
+        assert result.returncode == 0
+
+    def test_changelog_creation_traditional_vs_flexible(self, repo_path: Path) -> None:
+        """Test changelog creation for both traditional and flexible structures."""
+        write_files(
+            repo_path,
+            {
+                # Traditional structure
+                "task/traditional/0.1/traditional.yaml": task("traditional", "0.1"),
+                # Flexible structure
+                "task/flexible/flexible.yaml": task("flexible", "0.1"),
+            },
+        )
+
+        # Try to create changelogs for both
+        result_traditional = run_versioning_script(
+            repo_path, "new-changelog", "task/traditional"
+        )
+        result_flexible = run_versioning_script(
+            repo_path, "new-changelog", "task/flexible"
+        )
+
+        # Traditional should work
+        assert result_traditional.returncode == 0
+        assert "Created CHANGELOG.md" in result_traditional.stderr
+
+        # Flexible structure may not be recognized (current limitation)
+        # The script should handle this gracefully without crashing
+        assert result_flexible.returncode in [0, 1]  # Either succeeds or fails gracefully

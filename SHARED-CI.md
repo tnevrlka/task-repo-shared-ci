@@ -41,32 +41,68 @@ as you make more local changes you increase the chance of merge conflicts.
 
 ## 🌲 Expected repository structure
 
-The shared scripts and workflows expect this repository to follow the
-[Tekton Catalog structure][tekton-catalog-structure].
+The shared scripts and workflows support **flexible task directory structures**. Tasks can be organized with or without version subdirectories, and can be nested at arbitrary depths.
 
 They also introduce new elements and conventions, such as the `${task_name}-oci-ta`
 directories for [Trusted Artifacts](#trusted-artifacts) tasks.
 
 For details on how the `tests` directory is used, see [Task Integration Tests](#task-integration-tests).
 
-Putting it all together, the structure is as follows:
+### Supported structures
+
+Tasks can be organized in multiple ways:
+
+**Traditional versioned structure (backwards compatible):**
+```text
+task/hello/0.1/hello.yaml          👈 ${task_name}.yaml
+task/hello/0.2/hello.yaml
+```
+
+**Flat structure (no version subdirectories):**
+```text
+task/hello/hello.yaml              👈 ${task_name}.yaml
+```
+
+**Arbitrarily nested structure:**
+```text
+task/hello/stable/v1/hello.yaml    👈 ${task_name}.yaml
+task/complex/deep/nested/complex.yaml
+```
+
+### Key requirements
+
+- **Task YAML naming:** The task YAML file must be named `${task_name}.yaml` where `task_name` matches one of the parent directory names in its path
+- **Version tracking:** Task version is specified using the `app.kubernetes.io/version` annotation in the task metadata (not directory structure)
+- **CHANGELOG:** Required at `task/${task_name}/CHANGELOG.md` (at task root level, not version-specific)
+
+### Complete example structure
 
 ```text
 task                                    👈 all tasks go here
 ├── hello                               👈 the name of a task
 │   ├── CHANGELOG.md                    👈 the changelog for this task (required)
-│   ├── 0.1                             👈 a specific version of the task
-│   │   ├── hello.yaml                  👈 ${task_name}.yaml
+│   ├── 0.1                             👈 a specific version of the task (optional)
+│   │   ├── hello.yaml                  👈 ${task_name}.yaml with app.kubernetes.io/version: "0.1"
 │   │   ├── README.md
 │   │   └── tests                       👈 Test directory
 │   │       ├── test-hello.yaml         👈 Test - A Pipeline named test-*.yaml
 │   │       ├── test-hello-2.yaml       👈 Test case 2
 │   │       └── pre-apply-task-hook.sh  👈 Optional hook
 │   └── 0.2
-│       ├── hello.yaml
+│       ├── hello.yaml                  👈 app.kubernetes.io/version: "0.2"
 │       ├── migrations
 │       │   └── 0.2.sh                  👈 script for migrating to 0.2
 │       └── README.md
+├── simple-task                         👈 example: no version subdirectory
+│   ├── simple-task.yaml                👈 app.kubernetes.io/version: "1.0"
+│   └── tests
+│       └── test-simple-task.yaml
+├── complex                             👈 example: arbitrarily nested
+│   └── deep
+│       └── nested
+│           ├── complex.yaml            👈 app.kubernetes.io/version: "2.1"
+│           └── tests
+│               └── test-complex.yaml
 └── hello-oci-ta                        👈 ${task_name}-oci-ta for Trusted Artifacts
     ├── CHANGELOG.md
     └── 0.1
